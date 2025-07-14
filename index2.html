@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Centered Image & Custom Buttons</title>
+    <style>
+        @font-face {
+            font-family: 'KGBlankSpaceSolid';
+            src: url('KGBlankSpaceSolid.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #000000;
+        }
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 40px;
+            background-image: url('wow.png');
+            background-size: cover;
+            background-position: center;
+            border-radius: 32px;
+            box-shadow: 0 8px 32px #000a;
+            min-width: 400px;
+            min-height: 400px;
+        }
+        .center-image {
+            max-width: 600px;
+            width: 80vw;
+            margin-bottom: 40px;
+            display: block;
+        }
+        .button-row {
+            display: flex;
+            gap: 30px;
+        }
+        .custom-btn {
+            width: 150px;
+            height: 60px;
+            border: none;
+            font-size: 1.2em;
+            cursor: pointer;
+            background-color: transparent;
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
+            color: #fff;
+            font-family: 'KGBlankSpaceSolid', Arial, sans-serif;
+            transition: transform 0.15s cubic-bezier(.68,-0.55,.29,1.55);
+            text-shadow: 2px 2px 0px #0000002a; /* Drop shadow for button text */
+        }
+
+        .custom-btn:active {
+            transform: scale(1.15);
+        }
+        /* Example backgrounds for buttons */
+        .btn1 { background-image: url('button001.png'); }
+        .btn2 { background-image: url('button001.png'); }
+        .btn3 { background-image: url('button001.png'); }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <img src="bbr.png" alt="Big Bang Racing" class="center-image">
+        <div class="button-row">
+            <button class="custom-btn btn1">Button 1</button>
+            <button class="custom-btn btn2">Button 2</button>
+            <button class="custom-btn btn3">Button 3</button>
+        </div>
