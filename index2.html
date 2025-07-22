@@ -1,48 +1,163 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Centered Image & Custom Buttons</title>
+<body>
+    <div class="main-wrapper">
+        <div class="main-container">
+            <div class="main-content-row">
+                <div class="left-sections">
+                    <div class="section section1">
+                        <!-- Section 1 content -->
+                    </div>
+                    <div class="section section2">
+                        <div class="forums-header">
+                            <span class="forums-title">Forums</span>
+                            <button class="custom-btn post-btn">Post</button>
+                        </div>
+                        <div class="forums-body">
+                            <div class="forum-post">Why is mike like that?</div>
+                            <div class="forum-post">Poop Butt</div>
+                            <div class="forum-post">Post 3</div>
+                            <div class="forum-post">Post 4</div>
+                            <div class="forum-post">Post 5</div>
+                            <div class="forum-post">Post 6</div>
+                            <div class="forum-post">Post 7</div>
+                            <div class="forum-post">Post 8</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="section section3">
+                    <button class="custom-btn btn3">Button 3</button>
+                </div>
+            </div>
+            <div class="main-bottom-image">
+                <img src="ad.png" alt="Ad Banner" />
+            </div>
+        </div>
+    </div>
+
     <style>
         @font-face {
             font-family: 'KGBlankSpaceSolid';
             src: url('KGBlankSpaceSolid.ttf') format('truetype');
-            font-weight: normal;
-            font-style: normal;
         }
+
         body {
+            background: #000;
+            min-height: 100vh;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 100vh;
             margin: 0;
-            background: #000000;
         }
+
+        .main-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
         .main-container {
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 60px 40px;
+            align-items: stretch;
+            justify-content: flex-start;
+            padding: 12px 12px 0 12px;
             background-image: url('wow.png');
-            background-size: cover;
+            background-size: 100% 100%;
             background-position: center;
-            border-radius: 32px;
             box-shadow: 0 8px 32px #000a;
             min-width: 400px;
-            min-height: 400px;
+            max-width: 900px;
+            min-height: 600px;
+            gap: 0;
         }
-        .center-image {
-            max-width: 600px;
-            width: 80vw;
-            margin-bottom: 40px;
-            display: block;
-        }
-        .button-row {
+
+        .main-content-row {
             display: flex;
-            gap: 30px;
+            flex-direction: row;
+            align-items: stretch;
+            justify-content: center;
+            gap: 6px;
+            flex: 1 1 auto;
+            margin-bottom: 6px;
         }
+
+        .left-sections {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 6px;
+            flex: 2;
+        }
+
+        .section {
+            background: none;
+            background-image: url('transparent_section_bg.png');
+            background-size: 100% 100%;
+            background-repeat: no-repeat;
+            background-position: center;
+            padding: 12px 30px 1px 30px;
+            min-height: 200px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: flex-start;
+            border: none;
+            border-radius: 0;
+            box-sizing: border-box;
+        }
+
+        .section1,
+        .section2 {
+            flex: 1;
+        }
+
+        .section3 {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .forums-header {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .forums-title {
+            font-family: 'KGBlankSpaceSolid', Arial, sans-serif;
+            font-size: 1.6em;
+            color: #fff;
+        }
+
+        .forums-body {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .forum-post {
+            background: none;
+            background-image: url('forumbox.png'); /* replace with your image */
+            background-size: 100% 100%;
+            background-repeat: no-repeat;
+            background-position: center;
+            padding: 8px 40px; /* increased left and right padding */
+            border: none;
+            outline: none;
+            width: 100%;
+            height: 110%;
+            color: #fff;
+            font-family: 'KGBlankSpaceSolid', sans-serif;
+            font-size: 0.95em;
+            box-sizing: border-box;
+        }
+
         .custom-btn {
             width: 150px;
             height: 60px;
@@ -56,23 +171,73 @@
             color: #fff;
             font-family: 'KGBlankSpaceSolid', Arial, sans-serif;
             transition: transform 0.15s cubic-bezier(.68,-0.55,.29,1.55);
-            text-shadow: 2px 2px 0px #0000002a; /* Drop shadow for button text */
+            text-shadow: 2px 2px 0px #0000002a;
+            box-sizing: border-box;
         }
 
         .custom-btn:active {
             transform: scale(1.15);
         }
-        /* Example backgrounds for buttons */
-        .btn1 { background-image: url('button001.png'); }
-        .btn2 { background-image: url('button001.png'); }
-        .btn3 { background-image: url('button001.png'); }
+
+        .custom-btn:hover {
+            cursor: default !important;
+            }
+
+
+        .btn3,
+        .post-btn {
+            background-image: url('button001.png');
+        }
+
+        .post-btn {
+            width: 120px;
+            height: 50px;
+            font-size: 1em;
+        }
+
+        .main-bottom-image {
+            width: 100%;
+            height: 100px;
+            min-height: 60px;
+            max-height: 160px;
+            display: flex;
+            align-items: stretch;
+            justify-content: stretch;
+            padding: 0;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+            box-sizing: border-box;
+        }
+
+        .main-bottom-image img {
+            width: 110%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            pointer-events: none;
+            margin: 0;
+            padding: 0;
+            flex: 1 1 0%;
+            box-sizing: border-box;
+        }
     </style>
-</head>
-<body>
-    <div class="main-container">
-        <img src="bbr.png" alt="Big Bang Racing" class="center-image">
-        <div class="button-row">
-            <button class="custom-btn btn1">Button 1</button>
-            <button class="custom-btn btn2">Button 2</button>
-            <button class="custom-btn btn3">Button 3</button>
-        </div>
+
+    <script>
+        const sections = document.querySelectorAll('.section');
+
+        sections.forEach(section => {
+            section.style.transformStyle = 'preserve-3d';
+            section.style.transformOrigin = 'center';
+            section.parentElement.style.perspective = '800px';
+        });
+
+        setInterval(() => {
+            sections.forEach(section => {
+                const rotateX = (Math.random() - 0.5).toFixed(3);
+                const rotateY = (Math.random() - 0.5).toFixed(3);
+                section.style.transform = `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+            });
+        }, 300);
+    </script>
+</body>
