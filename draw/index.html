@@ -1,21 +1,68 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Python Game</title>
-  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
-  <style>body, html { margin: 0; padding: 0; height: 100%; background: black; }</style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Draw Like a Chad</title>
+<style>
+  body, html {
+    height: 100%;
+    margin: 0;
+    background-color: black;
+    color: white;
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+  h1 {
+    margin: 0;
+    font-weight: normal;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  h1 img {
+    height: 24px;
+    width: 24px;
+  }
+  button {
+    margin-top: 8px;
+    padding: 10px 25px;
+    font-size: 18px;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    background-color: #222;
+    color: white;
+    transition: background-color 0.3s ease;
+  }
+  button:hover {
+    background-color: #555;
+  }
+  .disclaimer {
+    margin-top: 6px;
+    font-size: 12px;
+    color: gray;
+    font-style: italic;
+    text-align: center;
+    max-width: 250px;
+  }
+</style>
 </head>
 <body>
-  <script>
-    async function main() {
-      const pyodide = await loadPyodide();
-      await pyodide.loadPackage("pygame-ce");  // Load pygame for Pyodide
-      const response = await fetch('app.py');
-      const code = await response.text();
-      await pyodide.runPythonAsync(code);
-    }
-    main();
-  </script>
+  <div>
+    <h1>
+      Draw like a chad
+      <img src="icon.png" alt="icon" />
+    </h1>
+    <a href="1010draw.exe" download>
+      <button>Download</button>
+    </a>
+    <div class="disclaimer">
+      *this fucking sucks, dm me on discord "oreytv" if there are errors.
+    </div>
+  </div>
 </body>
 </html>
