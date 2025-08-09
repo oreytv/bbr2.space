@@ -122,7 +122,7 @@ class NetworkClient:
                 pass
             print("TCP socket created")
         except Exception as e:
-            print(f"Socket creation failed: {e}")
+            print(f"Socket creation dfailed: {e}")
 
     def close_socket(self):
         try:
