@@ -10,6 +10,7 @@
   <script>
     async function main() {
       const pyodide = await loadPyodide();
+      await pyodide.loadPackage("pygame-ce");  // Load pygame for Pyodide
       const response = await fetch('app.py');
       const code = await response.text();
       await pyodide.runPythonAsync(code);
