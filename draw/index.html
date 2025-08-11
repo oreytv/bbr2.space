@@ -130,31 +130,24 @@
   /* Mobile responsiveness */
   @media (max-width: 768px) {
     #controls-left, #controls-right {
-      padding: 18px;
-      font-size: 17px;
-    }
-    
-    #colorPicker {
-      width: 36px;
-      height: 24px;
+      padding: 20px;
     }
     
     #valueSlider {
-      width: 96px;
-      height: 18px;
+      width: 85px;
     }
     
     #eraserToggle {
-      padding: 10px 14px;
-      font-size: 14px;
-    }
-    
-    #coordText {
+      padding: 13px 17px;
       font-size: 17px;
     }
     
+    #coordText {
+      font-size: 19px;
+    }
+    
     #statusText, #zoomText {
-      font-size: 14px;
+      font-size: 17px;
     }
   }
 
@@ -188,7 +181,7 @@
   const cursorIndicator = document.getElementById('cursor-indicator');
 
   const MIN_ZOOM = 0.1;
-  const MIN_DRAW_ZOOM = 34;
+  const MIN_DRAW_ZOOM = 26;
   const MAX_ZOOM = 50;
 
   let WORLD_WIDTH = 50000;
