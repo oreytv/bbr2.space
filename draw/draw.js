@@ -3,12 +3,20 @@
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
-  let WIDTH = canvas.width;
-  let HEIGHT = canvas.height;
+  // Global zoom limits
+  const MIN_ZOOM = 0.1;       // Minimum zoom allowed (zoom out limit)
+  const MIN_DRAW_ZOOM = 21;   // Minimum zoom level required to draw
+  const MAX_ZOOM = 50;        // Maximum zoom allowed (zoom in limit)
+
+  let WORLD_WIDTH = 500;  // Virtual world size
+  let WORLD_HEIGHT = 500; // Virtual world size
+  
+  // Keep canvas viewport at reasonable size
+  const VIEWPORT_WIDTH = 500;
+  const VIEWPORT_HEIGHT = 500;
 
   const CHUNK_SIZE = 50;
 
-  // Camera tracks world coords for top-left corner
   let camX = 0;
   let camY = 0;
 
@@ -16,7 +24,6 @@
   let offsetX = 0;
   let offsetY = 0;
 
-  // Brush color in rgb format for chunk pixels
   let brushColor = 'rgb(0,0,0)';
 
   let isDrawing = false;
@@ -44,16 +51,21 @@
   valueSlider.addEventListener('input', () => { updateBrush(); scheduleRedraw(); });
   updateBrush();
 
-  // Helpers for chunk coords and indexing
   function chunkKey(cx, cy) { return `${cx},${cy}`; }
   function createBlankChunk() { return new Array(CHUNK_SIZE * CHUNK_SIZE).fill('white'); }
   function positiveMod(n, m) { return ((n % m) + m) % m; }
-  function pixelToChunk(x, y) {
-    return { cx: Math.floor(x / CHUNK_SIZE), cy: Math.floor(y / CHUNK_SIZE) };
+  function pixelToChunk(x, y) { return { cx: Math.floor(x / CHUNK_SIZE), cy: Math.floor(y / CHUNK_SIZE) }; }
+  function pixelToChunkIndex(x, y) { return positiveMod(y, CHUNK_SIZE) * CHUNK_SIZE + positiveMod(x, CHUNK_SIZE); }
+
+  // Check if a chunk is within drawable bounds
+  function isChunkInBounds(cx, cy) {
+    if (cx < 0 || cy < 0) return false;
+    const x_start = cx * CHUNK_SIZE;
+    const y_start = cy * CHUNK_SIZE;
+    if (x_start >= WORLD_WIDTH || y_start >= WORLD_HEIGHT) return false;
+    return true;
   }
-  function pixelToChunkIndex(x, y) {
-    return positiveMod(y, CHUNK_SIZE) * CHUNK_SIZE + positiveMod(x, CHUNK_SIZE);
-  }
+
   function getPixelColor(x, y) {
     const { cx, cy } = pixelToChunk(x, y);
     const key = chunkKey(cx, cy);
@@ -62,8 +74,13 @@
     const idx = pixelToChunkIndex(x, y);
     return chunk.data[idx];
   }
+
   function setPixelColor(x, y, color) {
     const { cx, cy } = pixelToChunk(x, y);
+    
+    // Don't allow drawing in chunks outside bounds
+    if (!isChunkInBounds(cx, cy)) return;
+    
     const key = chunkKey(cx, cy);
     if (!chunks.has(key)) {
       chunks.set(key, { data: createBlankChunk(), loaded: true });
@@ -76,16 +93,16 @@
     pendingChunkUpdates.set(key, { cx, cy, data: chunk.data });
     scheduleSendChunkUpdates();
   }
+
   function createChunkCanvas(key) {
     const offscreenCanvas = document.createElement('canvas');
     offscreenCanvas.width = CHUNK_SIZE;
     offscreenCanvas.height = CHUNK_SIZE;
     const offscreenCtx = offscreenCanvas.getContext('2d');
-    offscreenCtx.imageSmoothingEnabled = false; // <-- Add this line here
-
+    offscreenCtx.imageSmoothingEnabled = false;
     chunks.get(key).offscreenCanvas = offscreenCanvas;
     chunks.get(key).offscreenCtx = offscreenCtx;
-    }
+  }
 
   function updateChunkCanvas(key) {
     const chunk = chunks.get(key);
@@ -116,7 +133,19 @@
     ctx2.putImageData(imgData, 0, 0);
   }
 
-  // WebSocket setup
+  // Create a grey chunk canvas for out-of-bounds areas
+  function createGreyChunkCanvas() {
+    const greyCanvas = document.createElement('canvas');
+    greyCanvas.width = CHUNK_SIZE;
+    greyCanvas.height = CHUNK_SIZE;
+    const greyCtx = greyCanvas.getContext('2d');
+    greyCtx.fillStyle = '#f0f0f0'; // Light grey
+    greyCtx.fillRect(0, 0, CHUNK_SIZE, CHUNK_SIZE);
+    return greyCanvas;
+  }
+
+  const greyChunkCanvas = createGreyChunkCanvas();
+
   const ws = new WebSocket('wss://mrmr39acmateta.loca.lt');
   let wsOpen = false;
 
@@ -161,27 +190,38 @@
         });
         scheduleRedraw();
       }
+      else if (data.type === 'pong') {
+        console.log('Ping latency:', Date.now() - data.time, 'ms');
+        return;
+      }
     } catch {}
   };
 
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  // Converts screen coords to grid coords
+  setInterval(() => {
+    if (wsOpen) {
+      ws.send(JSON.stringify({ type: 'ping', time: Date.now() }));
+    }
+  }, 15000);
+
   function screenToGrid(screenX, screenY) {
     const worldX = (screenX - offsetX) / scale;
     const worldY = (screenY - offsetY) / scale;
-    const gx = Math.floor(worldX);
-    const gy = Math.floor(worldY);
-    return { gx, gy };
-    }
+    return { gx: Math.floor(worldX), gy: Math.floor(worldY) };
+  }
 
+  let lastDrawTime = 0;
+  const DRAW_COOLDOWN_MS = 200;
 
   function drawPixelAt(gx, gy, color) {
+    const now = performance.now();
+    if (now - lastDrawTime < DRAW_COOLDOWN_MS) return; // cooldown check
+    lastDrawTime = now;
     if (getPixelColor(gx, gy) === color) return;
     setPixelColor(gx, gy, color);
   }
 
-  // Batch chunk update sender
   let sendScheduled = false;
   function scheduleSendChunkUpdates() {
     if (sendScheduled) return;
@@ -200,12 +240,13 @@
     }, 200);
   }
 
-  // Mouse handlers
   canvas.addEventListener('mousedown', e => {
     if (e.button === 0) {
-      if (scale <= 0.1) return;  // prevent drawing when zoomed out too far
-      isDrawing = true;
+      if (scale <= MIN_DRAW_ZOOM) return; // use min draw zoom
       const { gx, gy } = screenToGrid(e.offsetX, e.offsetY);
+      const { cx, cy } = pixelToChunk(gx, gy);
+      if (!isChunkInBounds(cx, cy)) return; // Don't draw in out-of-bounds chunks
+      isDrawing = true;
       drawPixelAt(gx, gy, brushColor);
       scheduleRedraw();
     } else if (e.button === 2) {
@@ -225,7 +266,9 @@
     lastMouseGrid = { gx, gy };
 
     if (isDrawing) {
-      if (scale <= 0.1) return; // prevent drawing when zoomed out
+      if (scale <= MIN_DRAW_ZOOM) return;
+      const { cx, cy } = pixelToChunk(gx, gy);
+      if (!isChunkInBounds(cx, cy)) return; // Don't draw in out-of-bounds chunks
       drawPixelAt(gx, gy, brushColor);
       scheduleRedraw();
     } else if (isPanning && panStart) {
@@ -240,7 +283,6 @@
     }
   });
 
-  // Zoom handler
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     const zoomIntensity = 0.1;
@@ -252,14 +294,140 @@
     const beforeZoomX = (mouseX - offsetX) / scale;
     const beforeZoomY = (mouseY - offsetY) / scale;
     const newScale = scale * zoom;
-    if (newScale < 0.1 || newScale > 10) return;
+    if (newScale < MIN_ZOOM || newScale > MAX_ZOOM) return;
     scale = newScale;
     offsetX = mouseX - beforeZoomX * scale;
     offsetY = mouseY - beforeZoomY * scale;
     scheduleRedraw();
   }, { passive: false });
 
-  // Redraw throttling
+  // Touch handling for mobile
+  let touches = [];
+  let lastTouchDistance = 0;
+  let lastTouchCenter = { x: 0, y: 0 };
+
+  function getTouchPos(touch) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: touch.clientX - rect.left,
+      y: touch.clientY - rect.top
+    };
+  }
+
+  function getTouchDistance(touch1, touch2) {
+    const dx = touch1.clientX - touch2.clientX;
+    const dy = touch1.clientY - touch2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function getTouchCenter(touch1, touch2) {
+    return {
+      x: (touch1.clientX + touch2.clientX) / 2,
+      y: (touch1.clientY + touch2.clientY) / 2
+    };
+  }
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    touches = Array.from(e.touches);
+    
+    if (touches.length === 1) {
+      // Single finger - start drawing
+      if (scale <= MIN_DRAW_ZOOM) return;
+      const pos = getTouchPos(touches[0]);
+      const { gx, gy } = screenToGrid(pos.x, pos.y);
+      const { cx, cy } = pixelToChunk(gx, gy);
+      if (!isChunkInBounds(cx, cy)) return;
+      isDrawing = true;
+      drawPixelAt(gx, gy, brushColor);
+      scheduleRedraw();
+    } else if (touches.length === 2) {
+      // Two fingers - prepare for pan/zoom
+      isDrawing = false;
+      isPanning = true;
+      lastTouchDistance = getTouchDistance(touches[0], touches[1]);
+      const rect = canvas.getBoundingClientRect();
+      lastTouchCenter = getTouchCenter(touches[0], touches[1]);
+      lastTouchCenter.x -= rect.left;
+      lastTouchCenter.y -= rect.top;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    touches = Array.from(e.touches);
+    
+    if (touches.length === 1 && isDrawing) {
+      // Single finger drawing
+      if (scale <= MIN_DRAW_ZOOM) return;
+      const pos = getTouchPos(touches[0]);
+      const { gx, gy } = screenToGrid(pos.x, pos.y);
+      const { cx, cy } = pixelToChunk(gx, gy);
+      if (!isChunkInBounds(cx, cy)) return;
+      drawPixelAt(gx, gy, brushColor);
+      scheduleRedraw();
+      
+      // Update coordinate display
+      coordText.textContent = `(${gx}, ${gy})`;
+      lastMouseGrid = { gx, gy };
+    } else if (touches.length === 2 && isPanning) {
+      // Two finger pan and zoom
+      const currentDistance = getTouchDistance(touches[0], touches[1]);
+      const rect = canvas.getBoundingClientRect();
+      const currentCenter = getTouchCenter(touches[0], touches[1]);
+      currentCenter.x -= rect.left;
+      currentCenter.y -= rect.top;
+      
+      // Handle zooming (pinch)
+      if (Math.abs(currentDistance - lastTouchDistance) > 5) {
+        const zoomFactor = currentDistance / lastTouchDistance;
+        const beforeZoomX = (currentCenter.x - offsetX) / scale;
+        const beforeZoomY = (currentCenter.y - offsetY) / scale;
+        const newScale = scale * zoomFactor;
+        
+        if (newScale >= MIN_ZOOM && newScale <= MAX_ZOOM) {
+          scale = newScale;
+          offsetX = currentCenter.x - beforeZoomX * scale;
+          offsetY = currentCenter.y - beforeZoomY * scale;
+        }
+        lastTouchDistance = currentDistance;
+      }
+      
+      // Handle panning
+      const dx = currentCenter.x - lastTouchCenter.x;
+      const dy = currentCenter.y - lastTouchCenter.y;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        offsetX += dx;
+        offsetY += dy;
+        lastTouchCenter = currentCenter;
+      }
+      
+      scheduleRedraw();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    touches = Array.from(e.touches);
+    
+    if (touches.length === 0) {
+      // All fingers lifted
+      isDrawing = false;
+      isPanning = false;
+    } else if (touches.length === 1) {
+      // One finger remaining - could switch to drawing mode
+      isPanning = false;
+      if (scale > MIN_DRAW_ZOOM) {
+        const pos = getTouchPos(touches[0]);
+        const { gx, gy } = screenToGrid(pos.x, pos.y);
+        const { cx, cy } = pixelToChunk(gx, gy);
+        if (isChunkInBounds(cx, cy)) {
+          isDrawing = true;
+        }
+      }
+    }
+  }, { passive: false });
+
   let redrawScheduled = false;
   function scheduleRedraw() {
     if (redrawScheduled) return;
@@ -270,7 +438,6 @@
     });
   }
 
-  // Draw a red square where the mouse grid is (pixel indicator)
   function drawPixelIndicator(gx, gy) {
     ctx.save();
     ctx.translate(offsetX, offsetY);
@@ -281,30 +448,31 @@
     ctx.restore();
   }
 
-  // Draw draw-enabled status at top-right corner
   function drawDrawStatus() {
     ctx.save();
-    ctx.resetTransform(); // screen coords
-
+    ctx.resetTransform();
     ctx.font = '16px monospace';
     ctx.textBaseline = 'top';
     ctx.textAlign = 'right';
-
-    const canDraw = scale > 0.1;
-    ctx.fillStyle = canDraw ? 'green' : 'red';
-    const statusText = canDraw ? 'DRAW ENABLED' : 'DRAW DISABLED';
-
+    const canDraw = scale > MIN_DRAW_ZOOM;
+    const { gx, gy } = lastMouseGrid || { gx: 0, gy: 0 };
+    const { cx, cy } = pixelToChunk(gx, gy);
+    const inBounds = isChunkInBounds(cx, cy);
+    
+    ctx.fillStyle = (canDraw && inBounds) ? 'green' : 'red';
+    let statusText = 'You may draw.';
+    if (!canDraw) {
+      statusText = 'Can\'t draw, Zoom in a little.';
+    } else if (!inBounds) {
+      statusText = 'Can\'t draw, Out of bounds.';
+    }
     ctx.fillText(statusText, canvas.width - 10, 10);
-
     ctx.fillStyle = 'black';
     ctx.font = '14px monospace';
     ctx.fillText(`Zoom: ${scale.toFixed(2)}x`, canvas.width - 10, 30);
-
     ctx.restore();
-    }
+  }
 
-
-  // Main redraw function
   function redraw() {
     ctx.fillStyle = 'white';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -312,24 +480,41 @@
     ctx.save();
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
+    ctx.imageSmoothingEnabled = false;
 
-    for (const [key, chunk] of chunks) {
-      if (!chunk.loaded || !chunk.offscreenCanvas) continue;
-      const [cx, cy] = key.split(',').map(Number);
-      ctx.drawImage(chunk.offscreenCanvas, cx * CHUNK_SIZE, cy * CHUNK_SIZE);
+    // Calculate visible chunk range
+    const startX = Math.floor(-offsetX / scale / CHUNK_SIZE) - 1;
+    const endX = Math.floor((-offsetX + canvas.width) / scale / CHUNK_SIZE) + 1;
+    const startY = Math.floor(-offsetY / scale / CHUNK_SIZE) - 1;
+    const endY = Math.floor((-offsetY + canvas.height) / scale / CHUNK_SIZE) + 1;
+
+    // Draw all visible chunks (both in-bounds and out-of-bounds)
+    for (let cx = startX; cx <= endX; cx++) {
+      for (let cy = startY; cy <= endY; cy++) {
+        const key = chunkKey(cx, cy);
+        const x = cx * CHUNK_SIZE;
+        const y = cy * CHUNK_SIZE;
+
+        if (isChunkInBounds(cx, cy)) {
+          // Draw normal chunks (white background or with data)
+          if (chunks.has(key) && chunks.get(key).loaded && chunks.get(key).offscreenCanvas) {
+            ctx.drawImage(chunks.get(key).offscreenCanvas, x, y);
+          }
+        } else {
+          // Draw grey chunks for out-of-bounds areas
+          ctx.drawImage(greyChunkCanvas, x, y);
+        }
+      }
     }
+
     ctx.restore();
 
-    // Draw pixel indicator last so it’s on top
     if (lastMouseGrid) {
       drawPixelIndicator(lastMouseGrid.gx, lastMouseGrid.gy);
     }
-
     drawDrawStatus();
   }
 
-  // Keep track of last mouse grid position for indicator
   let lastMouseGrid = null;
-
   redraw();
 })();
