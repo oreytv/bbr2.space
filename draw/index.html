@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <meta charset="UTF-8" />
 <title>chad draw</title>
 <style>
@@ -83,6 +84,22 @@
     width: 80px;
   }
   
+  #eraserToggle {
+    display: block;
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: #333;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  
+  #eraserToggle.active {
+    background: #ff4444;
+  }
+  
   #coordText {
     font-size: 14px;
     margin: 5px 0;
@@ -109,6 +126,35 @@
     z-index: 50;
     transform-origin: 0 0;
   }
+
+  /* Mobile responsiveness */
+  @media (max-width: 768px) {
+    #controls-left, #controls-right {
+      padding: 20px;
+      font-size: 16px;
+    }
+    
+    #colorPicker {
+      width: 60px;
+      height: 40px;
+    }
+    
+    #valueSlider {
+      width: 120px;
+      height: 30px;
+    }
+    
+    #eraserToggle {
+      padding: 12px 16px;
+      font-size: 16px;
+      min-height: 44px;
+    }
+    
+    #coordText, #statusText, #zoomText {
+      font-size: 16px;
+    }
+  }
+
 </style>
 </head>
 <body>
@@ -118,6 +164,7 @@
       <input type="color" id="colorPicker" value="#000000" />
       <div>Brightness:</div>
       <input type="range" id="valueSlider" min="0" max="100" value="100" />
+      <button id="eraserToggle">Eraser</button>
     </div>
     
     <div id="controls-right">
@@ -151,6 +198,8 @@
   let offsetY = 0;
 
   let brushColor = 'rgb(0,0,0)';
+  let originalBrushColor = 'rgb(0,0,0)';
+  let isEraserMode = false;
 
   let isDrawing = false;
   let isPanning = false;
@@ -162,6 +211,7 @@
 
   const colorPicker = document.getElementById('colorPicker');
   const valueSlider = document.getElementById('valueSlider');
+  const eraserToggle = document.getElementById('eraserToggle');
   const coordText = document.getElementById('coordText');
   const statusText = document.getElementById('statusText');
   const zoomText = document.getElementById('zoomText');
@@ -174,11 +224,25 @@
   function updateBrush() {
     const base = hexToRgb(colorPicker.value);
     const factor = valueSlider.value / 100;
-    brushColor = `rgb(${Math.floor(base.r * factor)},${Math.floor(base.g * factor)},${Math.floor(base.b * factor)})`;
+    originalBrushColor = `rgb(${Math.floor(base.r * factor)},${Math.floor(base.g * factor)},${Math.floor(base.b * factor)})`;
+    
+    if (isEraserMode) {
+      brushColor = 'white';
+    } else {
+      brushColor = originalBrushColor;
+    }
+  }
+
+  function toggleEraser() {
+    isEraserMode = !isEraserMode;
+    eraserToggle.classList.toggle('active', isEraserMode);
+    eraserToggle.textContent = isEraserMode ? 'Drawing' : 'Eraser';
+    updateBrush();
   }
 
   colorPicker.addEventListener('input', updateBrush);
   valueSlider.addEventListener('input', updateBrush);
+  eraserToggle.addEventListener('click', toggleEraser);
   updateBrush();
 
   function chunkKey(cx, cy) { return `${cx},${cy}`; }
@@ -395,7 +459,7 @@
   viewport.addEventListener('contextmenu', e => e.preventDefault());
 
   viewport.addEventListener('mousedown', e => {
-    if (e.button === 0) {
+    if (e.button === 0) { // Left click - draw with current color
       if (scale <= MIN_DRAW_ZOOM) return;
       const { wx, wy } = screenToWorld(e.clientX, e.clientY);
       const { cx, cy } = pixelToChunk(wx, wy);
@@ -403,15 +467,23 @@
       isDrawing = true;
       drawPixelAt(wx, wy, brushColor);
       scheduleRedraw();
-    } else if (e.button === 2) {
+    } else if (e.button === 1) { // Middle click - pan
       isPanning = true;
       panStart = { x: e.clientX, y: e.clientY };
+    } else if (e.button === 2) { // Right click - erase (draw white)
+      if (scale <= MIN_DRAW_ZOOM) return;
+      const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+      const { cx, cy } = pixelToChunk(wx, wy);
+      if (!isChunkInBounds(cx, cy)) return;
+      isDrawing = true;
+      drawPixelAt(wx, wy, 'white');
+      scheduleRedraw();
     }
   });
 
   viewport.addEventListener('mouseup', e => {
-    if (e.button === 0) isDrawing = false;
-    if (e.button === 2) isPanning = false;
+    if (e.button === 0 || e.button === 2) isDrawing = false;
+    if (e.button === 1) isPanning = false;
   });
 
   viewport.addEventListener('mousemove', e => {
@@ -422,7 +494,9 @@
       if (scale <= MIN_DRAW_ZOOM) return;
       const { cx, cy } = pixelToChunk(wx, wy);
       if (!isChunkInBounds(cx, cy)) return;
-      drawPixelAt(wx, wy, brushColor);
+      // Use white for right-click drag, normal brush color for left-click drag
+      const colorToUse = (isDrawing && event.buttons === 2) ? 'white' : brushColor;
+      drawPixelAt(wx, wy, colorToUse);
       scheduleRedraw();
     } else if (isPanning && panStart) {
       const dx = e.clientX - panStart.x;
@@ -470,13 +544,13 @@
     scheduleRedraw();
   }, { passive: false });
 
+  // Enhanced touch handling
   let touches = [];
   let lastTouchDistance = 0;
   let lastTouchCenter = { x: 0, y: 0 };
-
-  function getTouchPos(touch) {
-    return { x: touch.clientX, y: touch.clientY };
-  }
+  let touchStartTime = 0;
+  let isMultiTouch = false;
+  let touchDrawingActive = false;
 
   function getTouchDistance(touch1, touch2) {
     const dx = touch1.clientX - touch2.clientX;
@@ -494,17 +568,28 @@
   viewport.addEventListener('touchstart', e => {
     e.preventDefault();
     touches = Array.from(e.touches);
+    touchStartTime = Date.now();
     
     if (touches.length === 1) {
-      if (scale <= MIN_DRAW_ZOOM) return;
-      const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
-      const { cx, cy } = pixelToChunk(wx, wy);
-      if (!isChunkInBounds(cx, cy)) return;
-      isDrawing = true;
-      drawPixelAt(wx, wy, brushColor);
-      scheduleRedraw();
+      isMultiTouch = false;
+      // Only start drawing if zoom is sufficient and we're in bounds
+      if (scale > MIN_DRAW_ZOOM) {
+        const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+        const { cx, cy } = pixelToChunk(wx, wy);
+        if (isChunkInBounds(cx, cy)) {
+          // Wait a bit to see if this becomes a multi-touch gesture
+          setTimeout(() => {
+            if (!isMultiTouch && touches.length === 1) {
+              touchDrawingActive = true;
+              drawPixelAt(wx, wy, brushColor);
+              scheduleRedraw();
+            }
+          }, 50);
+        }
+      }
     } else if (touches.length === 2) {
-      isDrawing = false;
+      isMultiTouch = true;
+      touchDrawingActive = false;
       isPanning = true;
       lastTouchDistance = getTouchDistance(touches[0], touches[1]);
       lastTouchCenter = getTouchCenter(touches[0], touches[1]);
@@ -515,7 +600,7 @@
     e.preventDefault();
     touches = Array.from(e.touches);
     
-    if (touches.length === 1 && isDrawing) {
+    if (touches.length === 1 && touchDrawingActive && !isMultiTouch) {
       if (scale <= MIN_DRAW_ZOOM) return;
       const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
       const { cx, cy } = pixelToChunk(wx, wy);
@@ -526,7 +611,8 @@
       const currentDistance = getTouchDistance(touches[0], touches[1]);
       const currentCenter = getTouchCenter(touches[0], touches[1]);
       
-      if (Math.abs(currentDistance - lastTouchDistance) > 5) {
+      // Handle zoom
+      if (Math.abs(currentDistance - lastTouchDistance) > 10) {
         const rect = viewport.getBoundingClientRect();
         const centerX = currentCenter.x - rect.left;
         const centerY = currentCenter.y - rect.top;
@@ -543,9 +629,10 @@
         lastTouchDistance = currentDistance;
       }
       
+      // Handle pan
       const dx = currentCenter.x - lastTouchCenter.x;
       const dy = currentCenter.y - lastTouchCenter.y;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
         offsetX += dx;
         offsetY += dy;
         lastTouchCenter = currentCenter;
@@ -560,17 +647,21 @@
     touches = Array.from(e.touches);
     
     if (touches.length === 0) {
-      isDrawing = false;
+      touchDrawingActive = false;
       isPanning = false;
+      isMultiTouch = false;
     } else if (touches.length === 1) {
       isPanning = false;
-      if (scale > MIN_DRAW_ZOOM) {
-        const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
-        const { cx, cy } = pixelToChunk(wx, wy);
-        if (isChunkInBounds(cx, cy)) {
-          isDrawing = true;
+      // Don't immediately restart drawing after multi-touch ends
+      setTimeout(() => {
+        if (touches.length === 1 && !isMultiTouch && scale > MIN_DRAW_ZOOM) {
+          const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+          const { cx, cy } = pixelToChunk(wx, wy);
+          if (isChunkInBounds(cx, cy)) {
+            touchDrawingActive = true;
+          }
         }
-      }
+      }, 100);
     }
   }, { passive: false });
 
