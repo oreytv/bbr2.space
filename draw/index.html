@@ -138,7 +138,7 @@
   const cursorIndicator = document.getElementById('cursor-indicator');
 
   const MIN_ZOOM = 0.1;
-  const MIN_DRAW_ZOOM = 21;
+  const MIN_DRAW_ZOOM = 34;
   const MAX_ZOOM = 50;
 
   let WORLD_WIDTH = 50000;
@@ -364,7 +364,7 @@
   };
 
   let lastDrawTime = 0;
-  const DRAW_COOLDOWN_MS = 200;
+  const DRAW_COOLDOWN_MS = 50;
 
   function drawPixelAt(gx, gy, color) {
     const now = performance.now();
