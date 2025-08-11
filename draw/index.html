@@ -2,67 +2,54 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Draw Like a Chad</title>
+<title>chad draw</title>
 <style>
-  body, html {
-    height: 100%;
-    margin: 0;
-    background-color: black;
-    color: white;
-    font-family: Arial, sans-serif;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center;
+    background: #eee;
+    user-select: none;
   }
-  h1 {
-    margin: 0;
-    font-weight: normal;
+  #controls {
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 6px 12px;
+    background: #ddd;
+    width: 500px;
+    box-sizing: border-box;
   }
-  h1 img {
-    height: 24px;
-    width: 24px;
-  }
-  button {
-    margin-top: 8px;
-    padding: 10px 25px;
-    font-size: 18px;
+  #colorPicker, #valueSlider {
+    height: 30px;
     cursor: pointer;
-    border: none;
-    border-radius: 4px;
-    background-color: #222;
-    color: white;
-    transition: background-color 0.3s ease;
   }
-  button:hover {
-    background-color: #555;
+  #valueSlider {
+    width: 70px;
   }
-  .disclaimer {
-    margin-top: 6px;
-    font-size: 12px;
-    color: gray;
-    font-style: italic;
-    text-align: center;
-    max-width: 250px;
+  #coordText {
+    font-family: monospace;
+    font-size: 14px;
+    user-select: none;
+    margin-left: 10px;
+    min-width: 90px;
+  }
+  canvas {
+    image-rendering: pixelated;
+    background: white;
+    cursor: crosshair;
+    display: block;
+    margin-top: 4px;
+    border: 1px solid #999;
   }
 </style>
 </head>
 <body>
-  <div>
-    <h1>
-      Draw like a chad
-      <img src="icon.png" alt="icon" />
-    </h1>
-    <a href="1010draw.exe" download>
-      <button>Download</button>
-    </a>
-    <div class="disclaimer">
-      *this fucking sucks, dm me on discord "oreytv" if there are errors.
-    </div>
+  <div id="controls">
+    <input type="color" id="colorPicker" value="#000000" />
+    <input type="range" id="valueSlider" min="0" max="100" value="100" />
+    <div id="coordText">(0, 0)</div>
   </div>
+  <canvas id="draw" width="500" height="500"></canvas>
+  <script src="draw.js"></script>
 </body>
 </html>
