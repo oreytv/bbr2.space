@@ -490,11 +490,15 @@
   });
 
   viewport.addEventListener('mousemove', e => {
-    const { wx, wy } = screenToWorld(e.clientX, e.clientY);
-    coordText.textContent = `(${wx}, ${wy})`;
+    // Only update coordinates on desktop (mouse movement)
+    if (!('ontouchstart' in window)) {
+      const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+      coordText.textContent = `(${wx}, ${wy})`;
+    }
     
     if (isDrawing) {
       if (scale <= MIN_DRAW_ZOOM) return;
+      const { wx, wy } = screenToWorld(e.clientX, e.clientY);
       const { cx, cy } = pixelToChunk(wx, wy);
       if (!isChunkInBounds(cx, cy)) return;
       // Use white for right-click drag, normal brush color for left-click drag
@@ -510,23 +514,27 @@
       scheduleRedraw();
     }
     
-    const canDraw = scale > MIN_DRAW_ZOOM;
-    const { cx, cy } = pixelToChunk(wx, wy);
-    const inBounds = isChunkInBounds(cx, cy);
-    
-    if (canDraw && inBounds) {
-      statusText.textContent = 'You may draw.';
-      statusText.style.color = 'green';
-    } else if (!canDraw) {
-      statusText.textContent = 'Can\'t draw, Zoom in a little.';
-      statusText.style.color = 'red';
-    } else if (!inBounds) {
-      statusText.textContent = 'Can\'t draw, Out of bounds.';
-      statusText.style.color = 'red';
+    // Only show drawing status on desktop
+    if (!('ontouchstart' in window)) {
+      const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+      const canDraw = scale > MIN_DRAW_ZOOM;
+      const { cx, cy } = pixelToChunk(wx, wy);
+      const inBounds = isChunkInBounds(cx, cy);
+      
+      if (canDraw && inBounds) {
+        statusText.textContent = 'You may draw.';
+        statusText.style.color = 'green';
+      } else if (!canDraw) {
+        statusText.textContent = 'Can\'t draw, Zoom in a little.';
+        statusText.style.color = 'red';
+      } else if (!inBounds) {
+        statusText.textContent = 'Can\'t draw, Out of bounds.';
+        statusText.style.color = 'red';
+      }
+      
+      cursorIndicator.style.left = wx + 'px';
+      cursorIndicator.style.top = wy + 'px';
     }
-    
-    cursorIndicator.style.left = wx + 'px';
-    cursorIndicator.style.top = wy + 'px';
   });
 
   viewport.addEventListener('wheel', e => {
@@ -668,10 +676,39 @@
     }
   }, { passive: false });
 
+
+  function updateMobileCoordinates() {
+  if ('ontouchstart' in window) {
+    // Show center screen coordinates on mobile
+    const rect = viewport.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const { wx, wy } = screenToWorld(centerX + rect.left, centerY + rect.top);
+    coordText.textContent = `(${wx}, ${wy})`;
+    
+    // Update mobile drawing status
+    const canDraw = scale > MIN_DRAW_ZOOM;
+    const { cx, cy } = pixelToChunk(wx, wy);
+    const inBounds = isChunkInBounds(cx, cy);
+    
+    if (canDraw && inBounds) {
+      statusText.textContent = 'You may draw.';
+      statusText.style.color = 'green';
+    } else if (!canDraw) {
+      statusText.textContent = 'Can\'t draw, Zoom in a little.';
+      statusText.style.color = 'red';
+    } else if (!inBounds) {
+      statusText.textContent = 'Can\'t draw, Out of bounds.';
+      statusText.style.color = 'red';
+    }
+  }
+}
+
   function scheduleRedraw() {
     requestAnimationFrame(() => {
       updateTransform();
       updateVisibleChunks();
+      updateMobileCoordinates();
     });
   }
 
