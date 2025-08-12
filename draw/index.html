@@ -490,7 +490,7 @@
     hideDisconnectionWarning();
     ws.send(JSON.stringify({ type: 'request_all_chunks' }));
   };
-  ws.onclose = () => { wsOpen = false; };
+  ws.onclose = () => { wsOpen = false; showDisconnectionWarning(); };
   ws.onmessage = (msg) => {
     try {
       const data = JSON.parse(msg.data);
