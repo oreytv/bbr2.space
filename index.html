@@ -17,14 +17,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>bruce</title>
     <style>
+        @font-face {
+            font-family: 'KGBlankSpaceSolid';
+            src: url('KGBlankSpaceSolid.ttf') format('truetype');
+        }
+
+
         body, html {
             height: 100%;
             margin: 0;
             display: flex;
+            flex-direction: column;  /* add this */
             justify-content: center;
             align-items: center;
             background: black;
         }
+
+        
+        .custom-btn {
+            width: 150px;
+            height: 60px;
+            border: none;
+            font-size: 1.2em;
+            cursor: pointer;
+            background-color: transparent;
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
+            color: #fff;
+            font-family: 'KGBlankSpaceSolid', Arial, sans-serif;
+            transition: transform 0.15s cubic-bezier(.68,-0.55,.29,1.55);
+            text-shadow: 2px 2px 0px #0000002a;
+            box-sizing: border-box;
+        }
+
+        .btn3,
+        .post-btn {
+            background-image: url('button001.png');
+        }
+
+        .custom-btn:active {
+            transform: scale(1.15);
+        }
+
+        .custom-btn:hover {
+            cursor: default !important;
+            }
+
+        
     </style>
 
     <meta property="og:title" content="Super Legit!" />
@@ -39,5 +79,13 @@
 </head>
 <body>
     <img src="bruce.gif" alt="Bruce GIF" />
+    <button class="custom-btn btn3" id="drawBtn">Let's draw</button>
+
+    <script>
+        document.getElementById('drawBtn').addEventListener('click', () => {
+            window.location.href = 'https://bbr2.space/draw';
+        });
+    </script>
+
 </body>
 </html>

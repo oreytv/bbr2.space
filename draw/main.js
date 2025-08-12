@@ -1,0 +1,882 @@
+(() => {
+  const viewport = document.getElementById('viewport');
+  const world = document.getElementById('world');
+  const cursorIndicator = document.getElementById('cursor-indicator');
+
+  const MIN_ZOOM = 0.1;
+  const MIN_DRAW_ZOOM = ('ontouchstart' in window) ? 18 : 24;
+  const MAX_ZOOM = 50;
+
+  // LOD Configuration
+  const LOD_LEVELS = {
+    0: { minZoom: 1.2, maxChunks: 100, resolution: 1 },    // Full detail
+    1: { minZoom: 0.8, maxChunks: 200, resolution: 2 },    // Half resolution
+    2: { minZoom: 0.5, maxChunks: 400, resolution: 4 },  // Quarter resolution
+    3: { minZoom: 0, maxChunks: 800, resolution: 8 }     // Eighth resolution or placeholder
+  };
+
+  let WORLD_WIDTH = 50000;
+  let WORLD_HEIGHT = 50000;
+
+  const CHUNK_SIZE = 50;
+  const MAX_VISIBLE_CHUNKS = 1000; // Hard limit to prevent memory issues
+
+  let scale = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+  let currentLOD = 0;
+
+  let brushColor = 'rgb(0,0,0)';
+  let originalBrushColor = 'rgb(0,0,0)';
+  let isEraserMode = false;
+  let isEyedropperMode = false;
+  
+
+  let isDrawing = false;
+  let isPanning = false;
+  let panStart = null;
+
+  const chunks = new Map();
+  const chunkElements = new Map();
+  const pendingChunkUpdates = new Map();
+  const chunkUpdateTimestamps = new Map(); // To prevent conflicts
+  const chunkLODCache = new Map(); // Cache for different LOD levels
+
+  const colorPicker = document.getElementById('colorPicker');
+  const valueSlider = document.getElementById('valueSlider');
+  const eraserToggle = document.getElementById('eraserToggle');
+  const eyedropperToggle = document.getElementById('eyedropperToggle');
+  const coordText = document.getElementById('coordText');
+  const statusText = document.getElementById('statusText');
+  const zoomText = document.getElementById('zoomText');
+  const lodText = document.getElementById('lodText');
+
+  function hexToRgb(hex) {
+    const bigint = parseInt(hex.slice(1), 16);
+    return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
+  }
+
+  function rgbToHex(rgbString) {
+    const matches = rgbString.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (matches) {
+      const r = parseInt(matches[1]);
+      const g = parseInt(matches[2]);
+      const b = parseInt(matches[3]);
+      return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+    if (rgbString === 'black') return '#000000';
+    if (rgbString === 'white') return '#ffffff';
+    return '#000000';
+  }
+
+  function updateBrush() {
+    const base = hexToRgb(colorPicker.value);
+    const factor = valueSlider.value / 100;
+    originalBrushColor = `rgb(${Math.floor(base.r * factor)},${Math.floor(base.g * factor)},${Math.floor(base.b * factor)})`;
+    
+    if (isEraserMode) {
+      brushColor = 'white';
+    } else {
+      brushColor = originalBrushColor;
+    }
+  }
+
+  function toggleEraser() {
+    isEraserMode = !isEraserMode;
+    eraserToggle.classList.toggle('active', isEraserMode);
+    eraserToggle.textContent = isEraserMode ? 'Drawing' : 'Eraser';
+    updateBrush();
+  }
+
+  function toggleEyedropper() {
+    isEyedropperMode = !isEyedropperMode;
+    eyedropperToggle.classList.toggle('active', isEyedropperMode);
+    eyedropperToggle.textContent = isEyedropperMode ? 'Drawing' : 'Eyedropper';
+    viewport.classList.toggle('eyedropper-mode', isEyedropperMode);
+  }
+
+  // LOD System Functions
+  function getCurrentLOD() {
+    for (let lod = 0; lod < Object.keys(LOD_LEVELS).length; lod++) {
+      if (scale >= LOD_LEVELS[lod].minZoom) {
+        return lod;
+      }
+    }
+    return Object.keys(LOD_LEVELS).length - 1;
+  }
+
+  function shouldShowChunk(cx, cy, lod) {
+    // Always show gray border chunks (out of bounds)
+    if (!isChunkInBounds(cx, cy)) {
+      return true;
+    }
+    
+    // For in-bounds chunks, only skip at very high LOD levels
+    if (lod >= 3) {
+      const skip = 2; // Show every 2nd chunk at highest LOD
+      return (cx % skip === 0 && cy % skip === 0);
+    }
+    
+    // Show all chunks for LOD 0, 1, 2
+    return true;
+  }
+
+  function createLODCanvas(originalData, resolution) {
+    if (resolution === 1) return originalData;
+    
+    const lodSize = Math.floor(CHUNK_SIZE / resolution);
+    const lodData = new Array(lodSize * lodSize);
+    
+    for (let y = 0; y < lodSize; y++) {
+      for (let x = 0; x < lodSize; x++) {
+        // Sample from original data
+        const srcX = Math.min(x * resolution, CHUNK_SIZE - 1);
+        const srcY = Math.min(y * resolution, CHUNK_SIZE - 1);
+        const srcIdx = srcY * CHUNK_SIZE + srcX;
+        const dstIdx = y * lodSize + x;
+        
+        if (originalData && originalData[srcIdx]) {
+          lodData[dstIdx] = originalData[srcIdx];
+        } else {
+          lodData[dstIdx] = 'white';
+        }
+      }
+    }
+    
+    return { data: lodData, size: lodSize };
+  }
+
+  function getAverageColor(data, startX, startY, blockSize, sourceSize) {
+    let r = 0, g = 0, b = 0, count = 0;
+    
+    for (let dy = 0; dy < blockSize && startY + dy < sourceSize; dy++) {
+      for (let dx = 0; dx < blockSize && startX + dx < sourceSize; dx++) {
+        const idx = (startY + dy) * sourceSize + (startX + dx);
+        const color = data[idx];
+        
+        if (color && color !== 'white') {
+          if (color.startsWith('rgb')) {
+            const rgb = color.match(/\d+/g).map(Number);
+            r += rgb[0];
+            g += rgb[1];
+            b += rgb[2];
+            count++;
+          } else if (color === 'black') {
+            count++;
+          }
+        }
+      }
+    }
+    
+    if (count === 0) return 'white';
+    if (count > 0 && r === 0 && g === 0 && b === 0) return 'black';
+    
+    return `rgb(${Math.floor(r / count)},${Math.floor(g / count)},${Math.floor(b / count)})`;
+  }
+
+  const originButton = document.getElementById('originButton');
+
+  function goToOrigin() {
+    // World origin coordinates
+    const originX = 26350;
+    const originY = 25662;
+    
+    // Center the origin on screen
+    const rect = viewport.getBoundingClientRect();
+    offsetX = rect.width / 2 - originX * scale;
+    offsetY = rect.height / 2 - originY * scale;
+    
+    scheduleRedraw();
+  }
+
+  originButton.addEventListener('click', goToOrigin);
+
+  colorPicker.addEventListener('input', updateBrush);
+  valueSlider.addEventListener('input', updateBrush);
+  eraserToggle.addEventListener('click', toggleEraser);
+  eyedropperToggle.addEventListener('click', toggleEyedropper);
+  updateBrush();
+
+  function chunkKey(cx, cy) { return `${cx},${cy}`; }
+  function createBlankChunk() { return new Array(CHUNK_SIZE * CHUNK_SIZE).fill('white'); }
+  function positiveMod(n, m) { return ((n % m) + m) % m; }
+  function pixelToChunk(x, y) { return { cx: Math.floor(x / CHUNK_SIZE), cy: Math.floor(y / CHUNK_SIZE) }; }
+  function pixelToChunkIndex(x, y) { return positiveMod(y, CHUNK_SIZE) * CHUNK_SIZE + positiveMod(x, CHUNK_SIZE); }
+
+  function isChunkInBounds(cx, cy) {
+    if (cx < 0 || cy < 0) return false;
+    const x_start = cx * CHUNK_SIZE;
+    const y_start = cy * CHUNK_SIZE;
+    if (x_start >= WORLD_WIDTH || y_start >= WORLD_HEIGHT) return false;
+    return true;
+  }
+
+  function getPixelColor(x, y) {
+    const { cx, cy } = pixelToChunk(x, y);
+    const key = chunkKey(cx, cy);
+    if (!chunks.has(key)) return 'white';
+    const chunk = chunks.get(key);
+    const idx = pixelToChunkIndex(x, y);
+    return chunk.data[idx];
+  }
+
+  function setPixelColor(x, y, color) {
+    const { cx, cy } = pixelToChunk(x, y);
+    if (!isChunkInBounds(cx, cy)) return;
+    
+    const key = chunkKey(cx, cy);
+    const now = Date.now();
+    
+    // Check if we recently received an update for this chunk from server
+    if (chunkUpdateTimestamps.has(key)) {
+      const lastUpdate = chunkUpdateTimestamps.get(key);
+      if (now - lastUpdate < 500) { // 500ms grace period
+        // Skip our update if server recently sent us data
+        return;
+      }
+    }
+    
+    if (!chunks.has(key)) {
+      chunks.set(key, { data: createBlankChunk(), loaded: true });
+    }
+    const chunk = chunks.get(key);
+    const idx = pixelToChunkIndex(x, y);
+    
+    // Only update if color is different
+    if (chunk.data[idx] === color) return;
+    
+    chunk.data[idx] = color;
+    
+    // Invalidate LOD cache for this chunk
+    chunkLODCache.delete(key);
+    
+    updateChunkVisual(key);
+    pendingChunkUpdates.set(key, { cx, cy, data: chunk.data });
+    scheduleSendChunkUpdates();
+  }
+
+  function createChunkElement(cx, cy, lod = 0) {
+    const chunkDiv = document.createElement('div');
+    chunkDiv.className = `chunk chunk-lod-${lod}`;
+    
+    if (!isChunkInBounds(cx, cy)) {
+      chunkDiv.className += ' chunk-grey';
+    }
+    
+    // Ensure pixel-perfect positioning
+    chunkDiv.style.left = Math.floor(cx * CHUNK_SIZE) + 'px';
+    chunkDiv.style.top = Math.floor(cy * CHUNK_SIZE) + 'px';
+    
+    if (isChunkInBounds(cx, cy)) {
+      const canvas = document.createElement('canvas');
+      
+      // Adjust canvas size based on LOD
+      const resolution = LOD_LEVELS[lod].resolution;
+      const canvasSize = Math.max(1, Math.floor(CHUNK_SIZE / resolution));
+      
+      canvas.width = canvasSize;
+      canvas.height = canvasSize;
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.imageRendering = 'pixelated';
+      chunkDiv.appendChild(canvas);
+    }
+    
+    world.appendChild(chunkDiv);
+    return chunkDiv;
+  }
+
+  function updateChunkVisual(key, forceLOD = null) {
+    if (!chunkElements.has(key) || !chunks.has(key)) return;
+    
+    const chunkDiv = chunkElements.get(key);
+    const canvas = chunkDiv.querySelector('canvas');
+    if (!canvas) return;
+    
+    const lod = forceLOD !== null ? forceLOD : currentLOD;
+    const resolution = LOD_LEVELS[lod].resolution;
+    
+    // Check cache first
+    const cacheKey = `${key}_${lod}`;
+    let lodData;
+    
+    if (chunkLODCache.has(cacheKey)) {
+      lodData = chunkLODCache.get(cacheKey);
+    } else {
+      const chunk = chunks.get(key);
+      if (resolution === 1) {
+        lodData = { data: chunk.data, size: CHUNK_SIZE };
+      } else {
+        // Create simplified version
+        const canvasSize = Math.max(1, Math.floor(CHUNK_SIZE / resolution));
+        const simplifiedData = new Array(canvasSize * canvasSize);
+        
+        for (let y = 0; y < canvasSize; y++) {
+          for (let x = 0; x < canvasSize; x++) {
+            const blockSize = resolution;
+            const srcX = x * blockSize;
+            const srcY = y * blockSize;
+            const avgColor = getAverageColor(chunk.data, srcX, srcY, blockSize, CHUNK_SIZE);
+            simplifiedData[y * canvasSize + x] = avgColor;
+          }
+        }
+        
+        lodData = { data: simplifiedData, size: canvasSize };
+      }
+      
+      // Cache the result
+      chunkLODCache.set(cacheKey, lodData);
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    
+    // Update canvas size if needed
+    if (canvas.width !== lodData.size || canvas.height !== lodData.size) {
+      canvas.width = lodData.size;
+      canvas.height = lodData.size;
+    }
+    
+    const imgData = ctx.createImageData(lodData.size, lodData.size);
+    
+    for (let i = 0; i < lodData.data.length; i++) {
+      const color = lodData.data[i];
+      const idx = i * 4;
+      if (color && color.startsWith('rgb')) {
+        const rgb = color.match(/\d+/g).map(Number);
+        imgData.data[idx] = rgb[0];
+        imgData.data[idx + 1] = rgb[1];
+        imgData.data[idx + 2] = rgb[2];
+        imgData.data[idx + 3] = 255;
+      } else if (color === 'black') {
+        imgData.data[idx] = 0;
+        imgData.data[idx + 1] = 0;
+        imgData.data[idx + 2] = 0;
+        imgData.data[idx + 3] = 255;
+      } else {
+        imgData.data[idx] = 255;
+        imgData.data[idx + 1] = 255;
+        imgData.data[idx + 2] = 255;
+        imgData.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  function screenToWorld(screenX, screenY) {
+    const rect = viewport.getBoundingClientRect();
+    const viewportX = screenX - rect.left;
+    const viewportY = screenY - rect.top;
+    const worldX = (viewportX - offsetX) / scale;
+    const worldY = (viewportY - offsetY) / scale;
+    return { wx: Math.floor(worldX), wy: Math.floor(worldY) };
+  }
+
+  function worldToScreen(worldX, worldY) {
+    const screenX = Math.floor(worldX * scale + offsetX);
+    const screenY = Math.floor(worldY * scale + offsetY);
+    return { sx: screenX, sy: screenY };
+  }
+
+  function updateTransform() {
+    world.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+    zoomText.textContent = `Zoom: ${scale.toFixed(2)}x`;
+    
+    // Update LOD
+    const newLOD = getCurrentLOD();
+    if (newLOD !== currentLOD) {
+      currentLOD = newLOD;
+      lodText.textContent = `LOD: ${currentLOD}`;
+      // Force update all visible chunks with new LOD
+      for (const key of chunkElements.keys()) {
+        updateChunkVisual(key, currentLOD);
+      }
+    }
+  }
+
+  function updateVisibleChunks() {
+    const rect = viewport.getBoundingClientRect();
+    const lod = currentLOD;
+    const lodConfig = LOD_LEVELS[lod];
+    
+    // Calculate visible area with extra margin for LOD
+    const margin = Math.max(2, lod + 1);
+    const startX = Math.floor(-offsetX / scale / CHUNK_SIZE) - margin;
+    const endX = Math.floor((-offsetX + rect.width) / scale / CHUNK_SIZE) + margin;
+    const startY = Math.floor(-offsetY / scale / CHUNK_SIZE) - margin;
+    const endY = Math.floor((-offsetY + rect.height) / scale / CHUNK_SIZE) + margin;
+
+    // Remove chunks that are no longer visible (but don't filter by LOD here)
+    const toRemove = [];
+    for (const [key, element] of chunkElements) {
+      const [cx, cy] = key.split(',').map(Number);
+      const outOfBounds = cx < startX || cx > endX || cy < startY || cy > endY;
+      
+      if (outOfBounds) {
+        toRemove.push(key);
+      }
+    }
+    
+    // Remove elements
+    toRemove.forEach(key => {
+      const element = chunkElements.get(key);
+      if (element) {
+        element.remove();
+        chunkElements.delete(key);
+      }
+    });
+
+    // Add new chunks that should be visible
+    const chunksToAdd = [];
+    for (let cx = startX; cx <= endX; cx++) {
+      for (let cy = startY; cy <= endY; cy++) {
+        const key = chunkKey(cx, cy);
+        if (!chunkElements.has(key) && shouldShowChunk(cx, cy, lod)) {
+          chunksToAdd.push({ cx, cy, key });
+        }
+      }
+    }
+    
+    // Sort chunks by distance from center for better visual loading
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+    chunksToAdd.sort((a, b) => {
+      const distA = Math.sqrt((a.cx - centerX) ** 2 + (a.cy - centerY) ** 2);
+      const distB = Math.sqrt((b.cx - centerX) ** 2 + (b.cy - centerY) ** 2);
+      return distA - distB;
+    });
+    
+    // Limit number of chunks to prevent memory issues
+    const maxChunks = Math.min(lodConfig.maxChunks, MAX_VISIBLE_CHUNKS);
+    const currentChunkCount = chunkElements.size;
+    const availableSlots = maxChunks - currentChunkCount;
+    
+    chunksToAdd.slice(0, availableSlots).forEach(({ cx, cy, key }) => {
+      const element = createChunkElement(cx, cy, lod);
+      chunkElements.set(key, element);
+      
+      if (chunks.has(key)) {
+        updateChunkVisual(key, lod);
+      }
+    });
+  }
+
+  const ws = new WebSocket('wss://mrmr39acmateta.loca.lt');
+  let wsOpen = false;
+
+  const disconnectionWarning = document.getElementById('disconnectionWarning');
+
+  // Show disconnection warning
+  function showDisconnectionWarning() {
+    disconnectionWarning.style.display = 'flex';
+  }
+
+  // Hide disconnection warning
+  function hideDisconnectionWarning() {
+    disconnectionWarning.style.display = 'none';
+  }
+
+  showDisconnectionWarning();
+
+  ws.onopen = () => {
+    wsOpen = true;
+    hideDisconnectionWarning();
+    //ws.send(JSON.stringify({ type: 'request_all_chunks' }));
+  };
+  ws.onclose = () => { wsOpen = false; showDisconnectionWarning(); };
+  ws.onmessage = (msg) => {
+    try {
+      const data = JSON.parse(msg.data);
+      if (data.type === 'canvas_size') {
+        WORLD_WIDTH = data.width;
+        WORLD_HEIGHT = data.height;
+        offsetX = -Math.floor(WORLD_WIDTH / 2);
+        offsetY = -Math.floor(WORLD_HEIGHT / 2);
+        scheduleRedraw();
+      }
+      else if (data.type === 'edit_chunk') {
+        const key = chunkKey(data.cx, data.cy);
+        chunkUpdateTimestamps.set(key, Date.now());
+        
+        // Invalidate LOD cache
+       chunkLODCache.delete(key);
+       for (let lod = 0; lod < Object.keys(LOD_LEVELS).length; lod++) {
+         chunkLODCache.delete(`${key}_${lod}`);
+       }
+       
+       if (!chunks.has(key)) {
+         chunks.set(key, { data: data.chunkData, loaded: true });
+       } else {
+         chunks.get(key).data = data.chunkData;
+       }
+       updateChunkVisual(key);
+       scheduleRedraw();
+     }
+     else if (data.type === 'all_chunks') {
+       data.chunks.forEach(chunkInfo => {
+         const key = chunkKey(chunkInfo.cx, chunkInfo.cy);
+         chunkUpdateTimestamps.set(key, Date.now());
+         
+         // Invalidate LOD cache
+         chunkLODCache.delete(key);
+         for (let lod = 0; lod < Object.keys(LOD_LEVELS).length; lod++) {
+           chunkLODCache.delete(`${key}_${lod}`);
+         }
+         
+         if (!chunks.has(key)) {
+           chunks.set(key, { data: chunkInfo.chunkData, loaded: true });
+         } else {
+           chunks.get(key).data = chunkInfo.chunkData;
+         }
+         updateChunkVisual(key);
+       });
+       scheduleRedraw();
+     }
+   } catch {}
+ };
+
+ let lastDrawTime = 0;
+ const DRAW_COOLDOWN_MS = 50;
+
+ function drawPixelAt(gx, gy, color) {
+   const now = performance.now();
+   if (now - lastDrawTime < DRAW_COOLDOWN_MS) return;
+   lastDrawTime = now;
+   if (getPixelColor(gx, gy) === color) return;
+   setPixelColor(gx, gy, color);
+ }
+
+ function eyedropPixelAt(gx, gy) {
+   const color = getPixelColor(gx, gy);
+   if (color && color !== 'white') {
+     const hex = rgbToHex(color);
+     colorPicker.value = hex;
+     updateBrush();
+     // Auto-untoggle eyedropper
+     toggleEyedropper();
+   }
+ }
+
+ let sendScheduled = false;
+ function scheduleSendChunkUpdates() {
+   if (sendScheduled) return;
+   sendScheduled = true;
+   setTimeout(() => {
+     if (!wsOpen) {
+       pendingChunkUpdates.clear();
+       sendScheduled = false;
+       return;
+     }
+     for (const [key, { cx, cy, data }] of pendingChunkUpdates.entries()) {
+       ws.send(JSON.stringify({ type: 'edit_chunk', cx, cy, chunkData: data }));
+     }
+     pendingChunkUpdates.clear();
+     sendScheduled = false;
+   }, 100); // Reduced from 200ms to 100ms for better responsiveness
+ }
+
+ viewport.addEventListener('contextmenu', e => e.preventDefault());
+
+ // Handle keyboard events for desktop eyedropper
+ let shiftPressed = false;
+ document.addEventListener('keydown', e => {
+   if (e.key === 'Shift') shiftPressed = true;
+ });
+ document.addEventListener('keyup', e => {
+   if (e.key === 'Shift') shiftPressed = false;
+ });
+
+ viewport.addEventListener('mousedown', e => {
+   if (e.button === 0) { // Left click
+     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+     const { cx, cy } = pixelToChunk(wx, wy);
+     if (!isChunkInBounds(cx, cy)) return;
+
+     if (isEyedropperMode || shiftPressed) {
+       eyedropPixelAt(wx, wy);
+       return;
+     }
+
+     if (scale <= MIN_DRAW_ZOOM) return;
+     isDrawing = true;
+     drawPixelAt(wx, wy, brushColor);
+     scheduleRedraw();
+   } else if (e.button === 1) { // Middle click - pan
+     isPanning = true;
+     panStart = { x: e.clientX, y: e.clientY };
+   } else if (e.button === 2) { // Right click - erase (draw white)
+     if (scale <= MIN_DRAW_ZOOM) return;
+     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+     const { cx, cy } = pixelToChunk(wx, wy);
+     if (!isChunkInBounds(cx, cy)) return;
+     isDrawing = true;
+     drawPixelAt(wx, wy, 'white');
+     scheduleRedraw();
+   }
+ });
+
+ viewport.addEventListener('mouseup', e => {
+   if (e.button === 0 || e.button === 2) isDrawing = false;
+   if (e.button === 1) isPanning = false;
+ });
+
+ viewport.addEventListener('mousemove', e => {
+   // Only update coordinates on desktop (mouse movement)
+   if (!('ontouchstart' in window)) {
+     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+     coordText.textContent = `(${wx}, ${wy})`;
+     
+     // Update cursor indicator position and size to cover full pixel
+     const { sx, sy } = worldToScreen(wx, wy);
+     cursorIndicator.style.left = sx + 'px';
+     cursorIndicator.style.top = sy + 'px';
+     
+     // Make cursor indicator cover the full pixel area
+     const pixelSize = Math.max(1, scale);
+     cursorIndicator.style.width = pixelSize + 'px';
+     cursorIndicator.style.height = pixelSize + 'px';
+     cursorIndicator.style.transform = `scale(1)`;
+   }
+   
+   if (isDrawing) {
+     if (scale <= MIN_DRAW_ZOOM) return;
+     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+     const { cx, cy } = pixelToChunk(wx, wy);
+     if (!isChunkInBounds(cx, cy)) return;
+     // Use white for right-click drag, normal brush color for left-click drag
+     const colorToUse = (isDrawing && event.buttons === 2) ? 'white' : brushColor;
+     drawPixelAt(wx, wy, colorToUse);
+     scheduleRedraw();
+   } else if (isPanning && panStart) {
+     const dx = e.clientX - panStart.x;
+     const dy = e.clientY - panStart.y;
+     panStart = { x: e.clientX, y: e.clientY };
+     offsetX += dx;
+     offsetY += dy;
+     scheduleRedraw();
+   }
+   
+   // Only show drawing status on desktop
+   if (!('ontouchstart' in window)) {
+     const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+     const canDraw = scale > MIN_DRAW_ZOOM;
+     const { cx, cy } = pixelToChunk(wx, wy);
+     const inBounds = isChunkInBounds(cx, cy);
+     
+     if (isEyedropperMode || shiftPressed) {
+       statusText.textContent = 'Eyedropper mode - click to sample color';
+       statusText.style.color = 'blue';
+     } else if (canDraw && inBounds) {
+       statusText.textContent = 'You may draw.';
+       statusText.style.color = 'green';
+     } else if (!canDraw) {
+       statusText.textContent = 'Can\'t draw, Zoom in a little.';
+       statusText.style.color = 'red';
+     } else if (!inBounds) {
+       statusText.textContent = 'Can\'t draw, Out of bounds.';
+       statusText.style.color = 'red';
+     }
+   }
+ });
+
+ viewport.addEventListener('wheel', e => {
+   e.preventDefault();
+   const zoomIntensity = 0.1;
+   const wheel = e.deltaY < 0 ? 1 : -1;
+   const zoom = 1 + wheel * zoomIntensity;
+   const rect = viewport.getBoundingClientRect();
+   const mouseX = e.clientX - rect.left;
+   const mouseY = e.clientY - rect.top;
+   const beforeZoomX = (mouseX - offsetX) / scale;
+   const beforeZoomY = (mouseY - offsetY) / scale;
+   const newScale = scale * zoom;
+   if (newScale < MIN_ZOOM || newScale > MAX_ZOOM) return;
+   scale = newScale;
+   offsetX = mouseX - beforeZoomX * scale;
+   offsetY = mouseY - beforeZoomY * scale;
+   scheduleRedraw();
+ }, { passive: false });
+
+ // Enhanced touch handling
+ let touches = [];
+ let lastTouchDistance = 0;
+ let lastTouchCenter = { x: 0, y: 0 };
+ let touchStartTime = 0;
+ let isMultiTouch = false;
+ let touchDrawingActive = false;
+
+ function getTouchDistance(touch1, touch2) {
+   const dx = touch1.clientX - touch2.clientX;
+   const dy = touch1.clientY - touch2.clientY;
+   return Math.sqrt(dx * dx + dy * dy);
+ }
+
+ function getTouchCenter(touch1, touch2) {
+   return {
+     x: (touch1.clientX + touch2.clientX) / 2,
+     y: (touch1.clientY + touch2.clientY) / 2
+   };
+ }
+
+ viewport.addEventListener('touchstart', e => {
+   e.preventDefault();
+   touches = Array.from(e.touches);
+   touchStartTime = Date.now();
+   
+   if (touches.length === 1) {
+     isMultiTouch = false;
+     // Only start drawing if zoom is sufficient and we're in bounds
+     if (scale > MIN_DRAW_ZOOM) {
+       const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+       const { cx, cy } = pixelToChunk(wx, wy);
+       if (isChunkInBounds(cx, cy)) {
+         // Wait a bit to see if this becomes a multi-touch gesture
+         setTimeout(() => {
+           if (!isMultiTouch && touches.length === 1) {
+             if (isEyedropperMode) {
+               eyedropPixelAt(wx, wy);
+             } else {
+               touchDrawingActive = true;
+               drawPixelAt(wx, wy, brushColor);
+               scheduleRedraw();
+             }
+           }
+         }, 50);
+       }
+     }
+   } else if (touches.length === 2) {
+     isMultiTouch = true;
+     touchDrawingActive = false;
+     isPanning = true;
+     lastTouchDistance = getTouchDistance(touches[0], touches[1]);
+     lastTouchCenter = getTouchCenter(touches[0], touches[1]);
+   }
+ }, { passive: false });
+
+ viewport.addEventListener('touchmove', e => {
+   e.preventDefault();
+   touches = Array.from(e.touches);
+   
+   if (touches.length === 1 && touchDrawingActive && !isMultiTouch && !isEyedropperMode) {
+     if (scale <= MIN_DRAW_ZOOM) return;
+     const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+     const { cx, cy } = pixelToChunk(wx, wy);
+     if (!isChunkInBounds(cx, cy)) return;
+     drawPixelAt(wx, wy, brushColor);
+     scheduleRedraw();
+   } else if (touches.length === 2 && isPanning) {
+     const currentDistance = getTouchDistance(touches[0], touches[1]);
+     const currentCenter = getTouchCenter(touches[0], touches[1]);
+     
+     // Handle zoom
+     if (Math.abs(currentDistance - lastTouchDistance) > 10) {
+       const rect = viewport.getBoundingClientRect();
+       const centerX = currentCenter.x - rect.left;
+       const centerY = currentCenter.y - rect.top;
+       const zoomFactor = currentDistance / lastTouchDistance;
+       const beforeZoomX = (centerX - offsetX) / scale;
+       const beforeZoomY = (centerY - offsetY) / scale;
+       const newScale = scale * zoomFactor;
+       
+       if (newScale >= MIN_ZOOM && newScale <= MAX_ZOOM) {
+         scale = newScale;
+         offsetX = centerX - beforeZoomX * scale;
+         offsetY = centerY - beforeZoomY * scale;
+       }
+       lastTouchDistance = currentDistance;
+     }
+     
+     // Handle pan
+     const dx = currentCenter.x - lastTouchCenter.x;
+     const dy = currentCenter.y - lastTouchCenter.y;
+     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+       offsetX += dx;
+       offsetY += dy;
+       lastTouchCenter = currentCenter;
+     }
+     
+     scheduleRedraw();
+   }
+ }, { passive: false });
+
+ viewport.addEventListener('touchend', e => {
+   e.preventDefault();
+   touches = Array.from(e.touches);
+   
+   if (touches.length === 0) {
+     touchDrawingActive = false;
+     isPanning = false;
+     isMultiTouch = false;
+   } else if (touches.length === 1) {
+     isPanning = false;
+     // Don't immediately restart drawing after multi-touch ends
+     setTimeout(() => {
+       if (touches.length === 1 && !isMultiTouch && scale > MIN_DRAW_ZOOM && !isEyedropperMode) {
+         const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+         const { cx, cy } = pixelToChunk(wx, wy);
+         if (isChunkInBounds(cx, cy)) {
+           touchDrawingActive = true;
+         }
+       }
+     }, 100);
+   }
+ }, { passive: false });
+
+ function updateMobileCoordinates() {
+   if ('ontouchstart' in window) {
+     // Show center screen coordinates on mobile
+     const rect = viewport.getBoundingClientRect();
+     const centerX = rect.width / 2;
+     const centerY = rect.height / 2;
+     const { wx, wy } = screenToWorld(centerX + rect.left, centerY + rect.top);
+     coordText.textContent = `(${wx}, ${wy})`;
+     
+     // Update mobile drawing status
+     const canDraw = scale > MIN_DRAW_ZOOM;
+     const { cx, cy } = pixelToChunk(wx, wy);
+     const inBounds = isChunkInBounds(cx, cy);
+     
+     if (isEyedropperMode) {
+       statusText.textContent = 'Eyedropper mode';
+       statusText.style.color = 'blue';
+     } else if (canDraw && inBounds) {
+       statusText.textContent = 'You may draw.';
+       statusText.style.color = 'green';
+     } else if (!canDraw) {
+       statusText.textContent = 'Can\'t draw, Zoom in a little.';
+       statusText.style.color = 'red';
+     } else if (!inBounds) {
+       statusText.textContent = 'Can\'t draw, Out of bounds.';
+       statusText.style.color = 'red';
+     }
+   }
+ }
+
+ // Throttled redraw function to prevent too many updates
+ let redrawScheduled = false;
+ function scheduleRedraw() {
+   if (redrawScheduled) return;
+   redrawScheduled = true;
+   requestAnimationFrame(() => {
+     updateTransform();
+     updateVisibleChunks();
+     updateMobileCoordinates();
+     redrawScheduled = false;
+   });
+ }
+
+ // Cleanup function for memory management
+ function cleanupLODCache() {
+   if (chunkLODCache.size > 2000) { // Prevent cache from growing too large
+     const entries = Array.from(chunkLODCache.keys());
+     // Remove oldest 25% of entries
+     const toRemove = entries.slice(0, Math.floor(entries.length * 0.25));
+     toRemove.forEach(key => chunkLODCache.delete(key));
+   }
+ }
+
+ // Run cleanup periodically
+ setInterval(cleanupLODCache, 30000); // Every 30 seconds
+
+ scheduleRedraw();
+})();
