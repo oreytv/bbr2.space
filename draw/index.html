@@ -427,8 +427,9 @@
   function createChunkElement(cx, cy) {
     const chunkDiv = document.createElement('div');
     chunkDiv.className = isChunkInBounds(cx, cy) ? 'chunk' : 'chunk chunk-grey';
-    chunkDiv.style.left = (cx * CHUNK_SIZE) + 'px';
-    chunkDiv.style.top = (cy * CHUNK_SIZE) + 'px';
+    // Ensure pixel-perfect positioning
+    chunkDiv.style.left = Math.floor(cx * CHUNK_SIZE) + 'px';
+    chunkDiv.style.top = Math.floor(cy * CHUNK_SIZE) + 'px';
     
     if (isChunkInBounds(cx, cy)) {
       const canvas = document.createElement('canvas');
@@ -491,8 +492,8 @@
   }
 
   function worldToScreen(worldX, worldY) {
-    const screenX = worldX * scale + offsetX;
-    const screenY = worldY * scale + offsetY;
+    const screenX = Math.floor(worldX * scale + offsetX);
+    const screenY = Math.floor(worldY * scale + offsetY);
     return { sx: screenX, sy: screenY };
   }
 
