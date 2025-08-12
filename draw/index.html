@@ -38,6 +38,10 @@
     cursor: crosshair;
   }
   
+  #viewport.eyedropper-mode {
+    cursor: crosshair !important;
+  }
+  
   #world {
     position: absolute;
     top: 0;
@@ -91,7 +95,7 @@
     width: 80px;
   }
   
-  #eraserToggle {
+  #eraserToggle, #eyedropperToggle {
     display: block;
     margin: 8px 0;
     padding: 8px 12px;
@@ -105,6 +109,10 @@
   
   #eraserToggle.active {
     background: #ff4444;
+  }
+  
+  #eyedropperToggle.active {
+    background: #4444ff;
   }
   
   #coordText {
@@ -131,6 +139,8 @@
     border: 1px solid red;
     pointer-events: none;
     z-index: 50;
+    box-sizing: border-box;
+    background: rgba(255, 0, 0, 0.2);
     transform-origin: 0 0;
   }
 
@@ -151,7 +161,6 @@
   }
 
   /* Mobile responsiveness */
-  /* Mobile responsiveness */
   @media (max-width: 768px) {
     #controls-left, #controls-right {
       padding: 20px;
@@ -161,7 +170,7 @@
       width: 85px;
     }
     
-    #eraserToggle, #originButton {
+    #eraserToggle, #originButton, #eyedropperToggle {
       padding: 13px 17px;
       font-size: 17px;
     }
@@ -238,6 +247,7 @@
       <div>Brightness:</div>
       <input type="range" id="valueSlider" min="0" max="100" value="100" />
       <button id="eraserToggle">Eraser</button>
+      <button id="eyedropperToggle">Eyedropper</button>
       <button id="originButton">Go to Origin</button>
     </div>
     
@@ -274,6 +284,7 @@
   let brushColor = 'rgb(0,0,0)';
   let originalBrushColor = 'rgb(0,0,0)';
   let isEraserMode = false;
+  let isEyedropperMode = false;
 
   let isDrawing = false;
   let isPanning = false;
@@ -282,10 +293,12 @@
   const chunks = new Map();
   const chunkElements = new Map();
   const pendingChunkUpdates = new Map();
+  const chunkUpdateTimestamps = new Map(); // To prevent conflicts
 
   const colorPicker = document.getElementById('colorPicker');
   const valueSlider = document.getElementById('valueSlider');
   const eraserToggle = document.getElementById('eraserToggle');
+  const eyedropperToggle = document.getElementById('eyedropperToggle');
   const coordText = document.getElementById('coordText');
   const statusText = document.getElementById('statusText');
   const zoomText = document.getElementById('zoomText');
@@ -293,6 +306,19 @@
   function hexToRgb(hex) {
     const bigint = parseInt(hex.slice(1), 16);
     return { r: (bigint >> 16) & 255, g: (bigint >> 8) & 255, b: bigint & 255 };
+  }
+
+  function rgbToHex(rgbString) {
+    const matches = rgbString.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (matches) {
+      const r = parseInt(matches[1]);
+      const g = parseInt(matches[2]);
+      const b = parseInt(matches[3]);
+      return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    }
+    if (rgbString === 'black') return '#000000';
+    if (rgbString === 'white') return '#ffffff';
+    return '#000000';
   }
 
   function updateBrush() {
@@ -312,6 +338,13 @@
     eraserToggle.classList.toggle('active', isEraserMode);
     eraserToggle.textContent = isEraserMode ? 'Drawing' : 'Eraser';
     updateBrush();
+  }
+
+  function toggleEyedropper() {
+    isEyedropperMode = !isEyedropperMode;
+    eyedropperToggle.classList.toggle('active', isEyedropperMode);
+    eyedropperToggle.textContent = isEyedropperMode ? 'Drawing' : 'Eyedropper';
+    viewport.classList.toggle('eyedropper-mode', isEyedropperMode);
   }
 
   const originButton = document.getElementById('originButton');
@@ -334,6 +367,7 @@
   colorPicker.addEventListener('input', updateBrush);
   valueSlider.addEventListener('input', updateBrush);
   eraserToggle.addEventListener('click', toggleEraser);
+  eyedropperToggle.addEventListener('click', toggleEyedropper);
   updateBrush();
 
   function chunkKey(cx, cy) { return `${cx},${cy}`; }
@@ -364,11 +398,26 @@
     if (!isChunkInBounds(cx, cy)) return;
     
     const key = chunkKey(cx, cy);
+    const now = Date.now();
+    
+    // Check if we recently received an update for this chunk from server
+    if (chunkUpdateTimestamps.has(key)) {
+      const lastUpdate = chunkUpdateTimestamps.get(key);
+      if (now - lastUpdate < 500) { // 500ms grace period
+        // Skip our update if server recently sent us data
+        return;
+      }
+    }
+    
     if (!chunks.has(key)) {
       chunks.set(key, { data: createBlankChunk(), loaded: true });
     }
     const chunk = chunks.get(key);
     const idx = pixelToChunkIndex(x, y);
+    
+    // Only update if color is different
+    if (chunk.data[idx] === color) return;
+    
     chunk.data[idx] = color;
     updateChunkVisual(key);
     pendingChunkUpdates.set(key, { cx, cy, data: chunk.data });
@@ -441,6 +490,12 @@
     return { wx: Math.floor(worldX), wy: Math.floor(worldY) };
   }
 
+  function worldToScreen(worldX, worldY) {
+    const screenX = worldX * scale + offsetX;
+    const screenY = worldY * scale + offsetY;
+    return { sx: screenX, sy: screenY };
+  }
+
   function updateTransform() {
     world.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
     zoomText.textContent = `Zoom: ${scale.toFixed(2)}x`;
@@ -510,6 +565,8 @@
       }
       else if (data.type === 'edit_chunk') {
         const key = chunkKey(data.cx, data.cy);
+        chunkUpdateTimestamps.set(key, Date.now());
+        
         if (!chunks.has(key)) {
           chunks.set(key, { data: data.chunkData, loaded: true });
         } else {
@@ -521,6 +578,8 @@
       else if (data.type === 'all_chunks') {
         data.chunks.forEach(chunkInfo => {
           const key = chunkKey(chunkInfo.cx, chunkInfo.cy);
+          chunkUpdateTimestamps.set(key, Date.now());
+          
           if (!chunks.has(key)) {
             chunks.set(key, { data: chunkInfo.chunkData, loaded: true });
           } else {
@@ -544,6 +603,17 @@
     setPixelColor(gx, gy, color);
   }
 
+  function eyedropPixelAt(gx, gy) {
+    const color = getPixelColor(gx, gy);
+    if (color && color !== 'white') {
+      const hex = rgbToHex(color);
+      colorPicker.value = hex;
+      updateBrush();
+      // Auto-untoggle eyedropper
+      toggleEyedropper();
+    }
+  }
+
   let sendScheduled = false;
   function scheduleSendChunkUpdates() {
     if (sendScheduled) return;
@@ -559,17 +629,32 @@
       }
       pendingChunkUpdates.clear();
       sendScheduled = false;
-    }, 200);
+    }, 100); // Reduced from 200ms to 100ms for better responsiveness
   }
 
   viewport.addEventListener('contextmenu', e => e.preventDefault());
 
+  // Handle keyboard events for desktop eyedropper
+  let shiftPressed = false;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Shift') shiftPressed = true;
+  });
+  document.addEventListener('keyup', e => {
+    if (e.key === 'Shift') shiftPressed = false;
+  });
+
   viewport.addEventListener('mousedown', e => {
-    if (e.button === 0) { // Left click - draw with current color
-      if (scale <= MIN_DRAW_ZOOM) return;
+    if (e.button === 0) { // Left click
       const { wx, wy } = screenToWorld(e.clientX, e.clientY);
       const { cx, cy } = pixelToChunk(wx, wy);
       if (!isChunkInBounds(cx, cy)) return;
+
+      if (isEyedropperMode || shiftPressed) {
+        eyedropPixelAt(wx, wy);
+        return;
+      }
+
+      if (scale <= MIN_DRAW_ZOOM) return;
       isDrawing = true;
       drawPixelAt(wx, wy, brushColor);
       scheduleRedraw();
@@ -597,6 +682,17 @@
     if (!('ontouchstart' in window)) {
       const { wx, wy } = screenToWorld(e.clientX, e.clientY);
       coordText.textContent = `(${wx}, ${wy})`;
+      
+      // Update cursor indicator position and size to cover full pixel
+      const { sx, sy } = worldToScreen(wx, wy);
+      cursorIndicator.style.left = sx + 'px';
+      cursorIndicator.style.top = sy + 'px';
+      
+      // Make cursor indicator cover the full pixel area
+      const pixelSize = Math.max(1, scale);
+      cursorIndicator.style.width = pixelSize + 'px';
+      cursorIndicator.style.height = pixelSize + 'px';
+      cursorIndicator.style.transform = `scale(1)`;
     }
     
     if (isDrawing) {
@@ -624,7 +720,10 @@
       const { cx, cy } = pixelToChunk(wx, wy);
       const inBounds = isChunkInBounds(cx, cy);
       
-      if (canDraw && inBounds) {
+      if (isEyedropperMode || shiftPressed) {
+        statusText.textContent = 'Eyedropper mode - click to sample color';
+        statusText.style.color = 'blue';
+      } else if (canDraw && inBounds) {
         statusText.textContent = 'You may draw.';
         statusText.style.color = 'green';
       } else if (!canDraw) {
@@ -634,9 +733,6 @@
         statusText.textContent = 'Can\'t draw, Out of bounds.';
         statusText.style.color = 'red';
       }
-      
-      cursorIndicator.style.left = wx + 'px';
-      cursorIndicator.style.top = wy + 'px';
     }
   });
 
@@ -694,129 +790,136 @@
           // Wait a bit to see if this becomes a multi-touch gesture
           setTimeout(() => {
             if (!isMultiTouch && touches.length === 1) {
-              touchDrawingActive = true;
-              drawPixelAt(wx, wy, brushColor);
-              scheduleRedraw();
+              if (isEyedropperMode) {
+                eyedropPixelAt(wx, wy);
+              } else {
+                touchDrawingActive = true;
+                drawPixelAt(wx, wy, brushColor);
+                scheduleRedraw();
+              }
             }
           }, 50);
-        }
-      }
-    } else if (touches.length === 2) {
-      isMultiTouch = true;
-      touchDrawingActive = false;
-      isPanning = true;
-      lastTouchDistance = getTouchDistance(touches[0], touches[1]);
-      lastTouchCenter = getTouchCenter(touches[0], touches[1]);
-    }
-  }, { passive: false });
-
-  viewport.addEventListener('touchmove', e => {
-    e.preventDefault();
-    touches = Array.from(e.touches);
-    
-    if (touches.length === 1 && touchDrawingActive && !isMultiTouch) {
-      if (scale <= MIN_DRAW_ZOOM) return;
-      const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
-      const { cx, cy } = pixelToChunk(wx, wy);
-      if (!isChunkInBounds(cx, cy)) return;
-      drawPixelAt(wx, wy, brushColor);
-      scheduleRedraw();
-    } else if (touches.length === 2 && isPanning) {
-      const currentDistance = getTouchDistance(touches[0], touches[1]);
-      const currentCenter = getTouchCenter(touches[0], touches[1]);
-      
-      // Handle zoom
-      if (Math.abs(currentDistance - lastTouchDistance) > 10) {
-        const rect = viewport.getBoundingClientRect();
-        const centerX = currentCenter.x - rect.left;
-        const centerY = currentCenter.y - rect.top;
-        const zoomFactor = currentDistance / lastTouchDistance;
-        const beforeZoomX = (centerX - offsetX) / scale;
-        const beforeZoomY = (centerY - offsetY) / scale;
-        const newScale = scale * zoomFactor;
-        
-        if (newScale >= MIN_ZOOM && newScale <= MAX_ZOOM) {
-          scale = newScale;
-          offsetX = centerX - beforeZoomX * scale;
-          offsetY = centerY - beforeZoomY * scale;
-        }
-        lastTouchDistance = currentDistance;
-      }
-      
-      // Handle pan
-      const dx = currentCenter.x - lastTouchCenter.x;
-      const dy = currentCenter.y - lastTouchCenter.y;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        offsetX += dx;
-        offsetY += dy;
-        lastTouchCenter = currentCenter;
-      }
-      
-      scheduleRedraw();
-    }
-  }, { passive: false });
-
-  viewport.addEventListener('touchend', e => {
-    e.preventDefault();
-    touches = Array.from(e.touches);
-    
-    if (touches.length === 0) {
-      touchDrawingActive = false;
-      isPanning = false;
-      isMultiTouch = false;
-    } else if (touches.length === 1) {
-      isPanning = false;
-      // Don't immediately restart drawing after multi-touch ends
-      setTimeout(() => {
-        if (touches.length === 1 && !isMultiTouch && scale > MIN_DRAW_ZOOM) {
-          const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
-          const { cx, cy } = pixelToChunk(wx, wy);
-          if (isChunkInBounds(cx, cy)) {
-            touchDrawingActive = true;
           }
-        }
-      }, 100);
-    }
-  }, { passive: false });
+     }
+   } else if (touches.length === 2) {
+     isMultiTouch = true;
+     touchDrawingActive = false;
+     isPanning = true;
+     lastTouchDistance = getTouchDistance(touches[0], touches[1]);
+     lastTouchCenter = getTouchCenter(touches[0], touches[1]);
+   }
+ }, { passive: false });
+
+ viewport.addEventListener('touchmove', e => {
+   e.preventDefault();
+   touches = Array.from(e.touches);
+   
+   if (touches.length === 1 && touchDrawingActive && !isMultiTouch && !isEyedropperMode) {
+     if (scale <= MIN_DRAW_ZOOM) return;
+     const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+     const { cx, cy } = pixelToChunk(wx, wy);
+     if (!isChunkInBounds(cx, cy)) return;
+     drawPixelAt(wx, wy, brushColor);
+     scheduleRedraw();
+   } else if (touches.length === 2 && isPanning) {
+     const currentDistance = getTouchDistance(touches[0], touches[1]);
+     const currentCenter = getTouchCenter(touches[0], touches[1]);
+     
+     // Handle zoom
+     if (Math.abs(currentDistance - lastTouchDistance) > 10) {
+       const rect = viewport.getBoundingClientRect();
+       const centerX = currentCenter.x - rect.left;
+       const centerY = currentCenter.y - rect.top;
+       const zoomFactor = currentDistance / lastTouchDistance;
+       const beforeZoomX = (centerX - offsetX) / scale;
+       const beforeZoomY = (centerY - offsetY) / scale;
+       const newScale = scale * zoomFactor;
+       
+       if (newScale >= MIN_ZOOM && newScale <= MAX_ZOOM) {
+         scale = newScale;
+         offsetX = centerX - beforeZoomX * scale;
+         offsetY = centerY - beforeZoomY * scale;
+       }
+       lastTouchDistance = currentDistance;
+     }
+     
+     // Handle pan
+     const dx = currentCenter.x - lastTouchCenter.x;
+     const dy = currentCenter.y - lastTouchCenter.y;
+     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+       offsetX += dx;
+       offsetY += dy;
+       lastTouchCenter = currentCenter;
+     }
+     
+     scheduleRedraw();
+   }
+ }, { passive: false });
+
+ viewport.addEventListener('touchend', e => {
+   e.preventDefault();
+   touches = Array.from(e.touches);
+   
+   if (touches.length === 0) {
+     touchDrawingActive = false;
+     isPanning = false;
+     isMultiTouch = false;
+   } else if (touches.length === 1) {
+     isPanning = false;
+     // Don't immediately restart drawing after multi-touch ends
+     setTimeout(() => {
+       if (touches.length === 1 && !isMultiTouch && scale > MIN_DRAW_ZOOM && !isEyedropperMode) {
+         const { wx, wy } = screenToWorld(touches[0].clientX, touches[0].clientY);
+         const { cx, cy } = pixelToChunk(wx, wy);
+         if (isChunkInBounds(cx, cy)) {
+           touchDrawingActive = true;
+         }
+       }
+     }, 100);
+   }
+ }, { passive: false });
 
 
-  function updateMobileCoordinates() {
-  if ('ontouchstart' in window) {
-    // Show center screen coordinates on mobile
-    const rect = viewport.getBoundingClientRect();
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const { wx, wy } = screenToWorld(centerX + rect.left, centerY + rect.top);
-    coordText.textContent = `(${wx}, ${wy})`;
-    
-    // Update mobile drawing status
-    const canDraw = scale > MIN_DRAW_ZOOM;
-    const { cx, cy } = pixelToChunk(wx, wy);
-    const inBounds = isChunkInBounds(cx, cy);
-    
-    if (canDraw && inBounds) {
-      statusText.textContent = 'You may draw.';
-      statusText.style.color = 'green';
-    } else if (!canDraw) {
-      statusText.textContent = 'Can\'t draw, Zoom in a little.';
-      statusText.style.color = 'red';
-    } else if (!inBounds) {
-      statusText.textContent = 'Can\'t draw, Out of bounds.';
-      statusText.style.color = 'red';
-    }
-  }
-}
+ function updateMobileCoordinates() {
+   if ('ontouchstart' in window) {
+     // Show center screen coordinates on mobile
+     const rect = viewport.getBoundingClientRect();
+     const centerX = rect.width / 2;
+     const centerY = rect.height / 2;
+     const { wx, wy } = screenToWorld(centerX + rect.left, centerY + rect.top);
+     coordText.textContent = `(${wx}, ${wy})`;
+     
+     // Update mobile drawing status
+     const canDraw = scale > MIN_DRAW_ZOOM;
+     const { cx, cy } = pixelToChunk(wx, wy);
+     const inBounds = isChunkInBounds(cx, cy);
+     
+     if (isEyedropperMode) {
+       statusText.textContent = 'Eyedropper mode';
+       statusText.style.color = 'blue';
+     } else if (canDraw && inBounds) {
+       statusText.textContent = 'You may draw.';
+       statusText.style.color = 'green';
+     } else if (!canDraw) {
+       statusText.textContent = 'Can\'t draw, Zoom in a little.';
+       statusText.style.color = 'red';
+     } else if (!inBounds) {
+       statusText.textContent = 'Can\'t draw, Out of bounds.';
+       statusText.style.color = 'red';
+     }
+   }
+ }
 
-  function scheduleRedraw() {
-    requestAnimationFrame(() => {
-      updateTransform();
-      updateVisibleChunks();
-      updateMobileCoordinates();
-    });
-  }
+ function scheduleRedraw() {
+   requestAnimationFrame(() => {
+     updateTransform();
+     updateVisibleChunks();
+     updateMobileCoordinates();
+   });
+ }
 
-  scheduleRedraw();
+ scheduleRedraw();
 })();
-  </script>
+ </script>
 </body>
 </html>
