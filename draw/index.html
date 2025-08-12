@@ -185,6 +185,30 @@
     box-sizing: border-box;
   }
 
+  #disconnectionWarning {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    font-size: 18px;
+    text-align: center;
+    z-index: 1001;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+
+  @media (max-width: 768px) {
+    #disconnectionWarning {
+      font-size: 15px;
+    }
+  }
+
   @media (max-width: 768px) and (orientation: portrait) {
     #landscapeWarning {
       display: flex;
@@ -196,6 +220,9 @@
 <body>
   <div id="landscapeWarning">
     <div>Switch to landscape mode for better use.</div>
+  </div>
+  <div id="disconnectionWarning">
+    <div>You have been disconnected. If you refresh and this shows up, the server is down.</div>
   </div>
   <div id="container">
     <div id="controls-left">
@@ -225,7 +252,7 @@
   const cursorIndicator = document.getElementById('cursor-indicator');
 
   const MIN_ZOOM = 0.1;
-  const MIN_DRAW_ZOOM = 22;
+  const MIN_DRAW_ZOOM = ('ontouchstart' in window) ? 18 : 24;;
   const MAX_ZOOM = 50;
 
   let WORLD_WIDTH = 50000;
@@ -444,8 +471,23 @@
   const ws = new WebSocket('wss://mrmr39acmateta.loca.lt');
   let wsOpen = false;
 
+  const disconnectionWarning = document.getElementById('disconnectionWarning');
+
+  // Show disconnection warning
+  function showDisconnectionWarning() {
+    disconnectionWarning.style.display = 'flex';
+  }
+
+  // Hide disconnection warning
+  function hideDisconnectionWarning() {
+    disconnectionWarning.style.display = 'none';
+  }
+
+  showDisconnectionWarning();
+
   ws.onopen = () => {
     wsOpen = true;
+    hideDisconnectionWarning();
     ws.send(JSON.stringify({ type: 'request_all_chunks' }));
   };
   ws.onclose = () => { wsOpen = false; };
